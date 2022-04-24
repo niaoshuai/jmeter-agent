@@ -15,6 +15,7 @@ func main() {
 		// 没有启动
 		if _, err := agent.GetJmeterPID(); err != nil {
 			agent.StartJmeterServer()
+			agent.Status = jmeter.StatusStart
 			c.JSON(200, gin.H{
 				"message": "ok",
 			})
@@ -33,6 +34,7 @@ func main() {
 		}
 
 		err := agent.StopJmeterServer()
+		agent.Status = jmeter.StatusStop
 		if err != nil {
 			c.JSON(500, gin.H{
 				"message": err.Error(),
