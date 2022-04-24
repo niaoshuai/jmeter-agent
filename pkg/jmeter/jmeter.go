@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -13,63 +12,39 @@ import (
 	"strings"
 )
 
-type JmeterAgentStatus string
+type AgentStatus string
 
-type JmeterAgent struct {
+const (
+	StatusStart AgentStatus = "start"
+	StatusStop  AgentStatus = "stop"
+)
+
+type Agent struct {
 	Version     string
 	InstallPath string
-	Status      JmeterAgentStatus
+	Status      AgentStatus
 }
 
-func (agent *JmeterAgent) downloadJmeter() {
-	ch := make(chan bool)
-	go func() {
-		var (
-			jmeterDownload = `https://dlcdn.apache.org//jmeter/binaries/apache-jmeter-%s.tgz`
-		)
-		res, err := http.Get(fmt.Sprintf(jmeterDownload, agent.Version))
-		if err != nil {
-			<-ch
-		}
-		//errOwn.Err(err)
-		//创建下载存放exe
-		f, err := os.Create(agent.InstallPath + fmt.Sprintf("apache-jmeter-%s.tgz", agent.Version))
-		//errOwn.Err(err)
-		io.Copy(f, res.Body)
-		defer f.Close()
-		<-ch
-	}()
-	ch <- true
-}
-
-func (agent *JmeterAgent) GetJmeterServerPid() ([]byte, error) {
-	cmd := exec.Command("bash",
-		"-c",
-		"jps -v |grep ApacheJMeter |awk '{print $1}'")
-	//获取输出对象，可以从该对象中读取输出结果
-	stdout, err := cmd.StdoutPipe()
+func (agent *Agent) DownloadJmeter() error {
+	var (
+		jmeterDownload = `https://mirrors.tuna.tsinghua.edu.cn/apache/jmeter/binaries/apache-jmeter-%s.tgz`
+	)
+	jmeterDownloadUrl := fmt.Sprintf(jmeterDownload, agent.Version)
+	res, err := http.Get(jmeterDownloadUrl)
 	if err != nil {
-		log.Println(err)
-		return nil, err
+		return err
 	}
-	defer stdout.Close()
-	err = cmd.Start()
+	if res.StatusCode != http.StatusOK {
+		return errors.New("文件不存在")
+	}
+	//创建下载存放exe
+	f, err := os.Create(agent.InstallPath + fmt.Sprintf("/apache-jmeter-%s.tgz", agent.Version))
 	if err != nil {
-		log.Println(err)
-		return nil, err
+		return err
 	}
-	// 读取输出结果
-	opBytes, err := ioutil.ReadAll(stdout)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-
-	if len(opBytes) < 1 {
-		return nil, errors.New("PID NOT FOUND")
-	}
-
-	return opBytes, nil
+	io.Copy(f, res.Body)
+	defer f.Close()
+	return nil
 }
 
 func GetOutBoundIP() (ip string, err error) {
@@ -85,49 +60,68 @@ func GetOutBoundIP() (ip string, err error) {
 }
 
 // InstallJmeter 安装Jmeter
-func (agent *JmeterAgent) InstallJmeter() {
-	agent.downloadJmeter()
+func (agent *Agent) InstallJmeter() error {
 	//执行该路径下的exe并安装
-	cmd := exec.Command("tar", "-zxvf", fmt.Sprintf("apache-jmeter-%s.tgz", agent.Version))
-	cmd.Start()
-	fmt.Printf("安装完成！安装路径为: %s \n")
+	fileName := fmt.Sprintf("apache-jmeter-%s.tgz", agent.Version)
+	cmd := exec.Command("tar", "-zxvf", fileName)
+	cmd.Dir = agent.InstallPath
+	err := cmd.Run()
+	if err != nil {
+		return err
+	}
+	log.Printf("安装完成！安装路径为: %s \n", agent.InstallPath+"/"+fileName)
+	return nil
 }
 
 // StartJmeterServer 启动JmeterServer
-func (agent *JmeterAgent) StartJmeterServer() {
+func (agent *Agent) StartJmeterServer() {
 	//java -server -XX:+HeapDumpOnOutOfMemoryError -Xms1g -Xmx1g -XX:MaxMetaspaceSize=256m  -Djava.security.egd=file:/dev/urandom -Xdock:name=JMeter -Xdock:icon=docs/images/jmeter_square.png -Dapple.laf.useScreenMenuBar=true -Dapple.eawt.quitStrategy=CLOSE_ALL_WINDOWS -Djava.rmi.server.hostname=172.100.80.35 -Dserver.rmi.ssl.disable=true -jar bin/ApacheJMeter.jar -s -j demo.log
 	//nohup./bin/jmeter-server -Djava.rmi.server.hostname=172.100.80.35 -Dserver_port=${SERVER_PORT:-1099} -Dserver.rmi.ssl.disable=true > runoob.log 2>&1 &
 	ip, err := GetOutBoundIP()
 	if err != nil {
 		fmt.Println(err)
 	}
-	ch := make(chan bool)
-	go func() {
-		cmd := exec.Command("./bin/jmeter-server",
-			fmt.Sprintf("-Djava.rmi.server.hostname=%s", ip),
-			"-Dserver_port=${SERVER_PORT:-1099}",
-			"-Dserver.rmi.ssl.disable=true")
-		cmd.Dir = agent.InstallPath + fmt.Sprintf("apache-jmeter-%s/", agent.Version)
-		if err := cmd.Start(); err != nil { // 运行命令
-			log.Println(err)
-		}
-
-		<-ch
-	}()
-	ch <- true
-
+	cmd := exec.Command("./bin/jmeter",
+		"-s",
+		fmt.Sprintf("-Djava.rmi.server.hostname=%s", ip),
+		"-Dserver_port=2099",
+		"-Dserver.rmi.ssl.disable=true")
+	cmd.Dir = agent.InstallPath + fmt.Sprintf("/apache-jmeter-%s", agent.Version)
+	if err := cmd.Start(); err != nil { // 运行命令
+		log.Println(err)
+	}
 }
 
-// StopJmeterServer StopJmeter 停止Jmeter
-func (agent *JmeterAgent) StopJmeterServer() {
-	ch := make(chan bool)
-	go func() {
-		jmeterLock, _ := ioutil.ReadFile("jmeter.lock")
-		cmd := exec.Command("kill", "-9", string(jmeterLock))
-		if err := cmd.Start(); err != nil { // 运行命令
-			log.Println(err)
-		}
-		<-ch
-	}()
-	ch <- true
+func (agent *Agent) GetJmeterPID() ([]byte, error) {
+	cmd := exec.Command("pgrep",
+		"-f",
+		"ApacheJMeter")
+	cmd.Dir = agent.InstallPath + fmt.Sprintf("/apache-jmeter-%s", agent.Version)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	if len(output) < 1 {
+		log.Println("null pid")
+		return nil, err
+	}
+	return output, nil
+}
+
+func (agent *Agent) StopJmeterServer() error {
+	pid, err := agent.GetJmeterPID()
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	cmd := exec.Command("bash", "-c", fmt.Sprintf("kill -9 %s", string(pid)))
+	cmd.Dir = agent.InstallPath + fmt.Sprintf("/apache-jmeter-%s", agent.Version)
+	msg, err := cmd.Output()
+	if err != nil { // 运行命令
+		log.Println(err)
+		return err
+	}
+	log.Println(msg)
+	return nil
 }
