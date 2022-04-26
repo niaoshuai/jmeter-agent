@@ -1,14 +1,20 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/niaoshuai/jmeter-agent/pkg/jmeter"
 )
 
+const HttpPort = "8080"
+
 // 启动 Jmeter
 func main() {
-	//agent := jmeter.Agent{Version: "5.1", InstallPath: "/usr/local"}
-	agent := jmeter.Agent{Version: "5.4.3", InstallPath: "/Users/coding/go/src/github.com/niaoshuai/jmeter-agent"}
+	ctx := context.Background()
+
+	agent := jmeter.Agent{Version: "5.4.3", InstallPath: "/Users/coding/go/src/github.com/niaoshuai/jmeter-agent", HttpPort: HttpPort}
+	agent.Register(ctx)
 
 	r := gin.Default()
 	r.GET("/start", func(c *gin.Context) {
@@ -46,5 +52,5 @@ func main() {
 		})
 
 	})
-	r.Run() // listen and serve on 0.0.0.0:8080
+	r.Run(fmt.Sprintf("%s:%s", agent.Ip, agent.HttpPort)) // listen and serve on 0.0.0.0:8080
 }

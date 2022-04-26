@@ -9,6 +9,7 @@ var (
 	agent = jmeter.Agent{
 		Version:     "5.4.3",
 		InstallPath: "/Users/coding/go/src/github.com/niaoshuai/jmeter-agent",
+		HttpPort:    "8080", ServerPort: "2099",
 	}
 )
 

@@ -1,16 +1,22 @@
 package jmeter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
-	"strings"
 )
+
+import (
+	"github.com/niaoshuai/jmeter-agent/pkg/ip"
+	"github.com/niaoshuai/jmeter-agent/pkg/redis"
+)
+
+const ServerPort = "2099"
 
 type AgentStatus string
 
@@ -23,6 +29,9 @@ type Agent struct {
 	Version     string
 	InstallPath string
 	Status      AgentStatus
+	Ip          string
+	HttpPort    string
+	ServerPort  string
 }
 
 func (agent *Agent) DownloadJmeter() error {
@@ -47,18 +56,6 @@ func (agent *Agent) DownloadJmeter() error {
 	return nil
 }
 
-func GetOutBoundIP() (ip string, err error) {
-	conn, err := net.Dial("udp", "8.8.8.8:53")
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	fmt.Println(localAddr.String())
-	ip = strings.Split(localAddr.String(), ":")[0]
-	return
-}
-
 // InstallJmeter 安装Jmeter
 func (agent *Agent) InstallJmeter() error {
 	//执行该路径下的exe并安装
@@ -77,19 +74,17 @@ func (agent *Agent) InstallJmeter() error {
 func (agent *Agent) StartJmeterServer() {
 	//java -server -XX:+HeapDumpOnOutOfMemoryError -Xms1g -Xmx1g -XX:MaxMetaspaceSize=256m  -Djava.security.egd=file:/dev/urandom -Xdock:name=JMeter -Xdock:icon=docs/images/jmeter_square.png -Dapple.laf.useScreenMenuBar=true -Dapple.eawt.quitStrategy=CLOSE_ALL_WINDOWS -Djava.rmi.server.hostname=172.100.80.35 -Dserver.rmi.ssl.disable=true -jar bin/ApacheJMeter.jar -s -j demo.log
 	//nohup./bin/jmeter-server -Djava.rmi.server.hostname=172.100.80.35 -Dserver_port=${SERVER_PORT:-1099} -Dserver.rmi.ssl.disable=true > runoob.log 2>&1 &
-	ip, err := GetOutBoundIP()
-	if err != nil {
-		fmt.Println(err)
-	}
+
 	cmd := exec.Command("./bin/jmeter",
 		"-s",
-		fmt.Sprintf("-Djava.rmi.server.hostname=%s", ip),
-		"-Dserver_port=2099",
+		fmt.Sprintf("-Djava.rmi.server.hostname=%s", agent.Ip),
+		fmt.Sprintf("-Dserver_port=%s", ServerPort),
 		"-Dserver.rmi.ssl.disable=true")
 	cmd.Dir = agent.InstallPath + fmt.Sprintf("/apache-jmeter-%s", agent.Version)
 	if err := cmd.Start(); err != nil { // 运行命令
 		log.Println(err)
 	}
+	agent.ServerPort = ServerPort
 }
 
 func (agent *Agent) GetJmeterPID() ([]byte, error) {
@@ -124,4 +119,17 @@ func (agent *Agent) StopJmeterServer() error {
 	}
 	log.Println(msg)
 	return nil
+}
+
+// Register 注册Agent 信息
+func (agent *Agent) Register(ctx context.Context) {
+	ip, err := ip.GetOutBoundIP()
+	if err != nil {
+		fmt.Println(err)
+	}
+	agent.Ip = ip
+
+	agent.StartJmeterServer()
+	// 存储信息到Redis
+	redis.AddAgentService(ctx, agent.Ip, agent.ServerPort)
 }
