@@ -128,8 +128,10 @@ func (agent *Agent) Register(ctx context.Context) {
 		fmt.Println(err)
 	}
 	agent.Ip = ip
-
-	agent.StartJmeterServer()
+	_, err = agent.GetJmeterPID()
+	if err != nil {
+		agent.StartJmeterServer()
+	}
 	// 存储信息到Redis
 	redis.AddAgentService(ctx, agent.Ip, agent.ServerPort)
 }
